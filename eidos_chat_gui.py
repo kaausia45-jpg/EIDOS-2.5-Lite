@@ -1,5 +1,5 @@
 import sys
-import numpy as np
+import numpy as np 
 import io
 import asyncio
 import aiohttp
@@ -16,6 +16,7 @@ from lite_llm_module import (
     modify_code_async
 )
 EIDOS_LOADED = True
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from PySide6.QtCore import (
@@ -114,7 +115,7 @@ class LineNumberArea(QWidget):
         palette = self.palette()
         self.text_color = palette.color(QPalette.ColorRole.Text)
         self.background_color = palette.color(QPalette.ColorRole.AlternateBase)
-        self.update() # 즉시 다시 그리기
+        self.update()
 
 class SettingsDialog(QDialog):
     """ (Lite) 설정 다이얼로그 (AGI/Pro 모드 제거, 테마 설정만 유지) """
@@ -144,7 +145,6 @@ class SettingsDialog(QDialog):
 class EidosWorker(QThread):
     """ (Lite) GUI와 Lite Core를 연결하는 워커 (단순화됨) """
     
-    # (natural_text, reasoning_log, exec_task_state)
     response_ready = Signal(str, str, object)
     
     error_occurred = Signal(str)
@@ -253,8 +253,8 @@ class MainHubWindow(QMainWindow):
     """ (Lite) EIDOS-Lite Studio (Task Manager가 제거된 버전) """
     def __init__(self, eidos_worker, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("EIDOS AGI Studio (Lite)")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setWindowTitle("EIDOS AGI Studio (Lite)") # [Lite] 타이틀
+        self.setGeometry(100, 100, 1200, 800) # 크기 소폭 축소
         
         self.eidos_worker = eidos_worker
         self.code_editor_instance: Optional[CodeEditorWindow] = None
@@ -440,7 +440,7 @@ class CodeEditorWindow(QWidget):
         editor_console_splitter.addWidget(editor_widget)
         editor_console_splitter.addWidget(self.debug_console)
         editor_console_splitter.setSizes([400, 150])
-      
+        
 
         main_splitter.addWidget(self.file_tree)
         main_splitter.addWidget(editor_console_splitter)
@@ -490,6 +490,7 @@ class CodeEditorWindow(QWidget):
         """ (Lite) 테마 변경 시 줄 번호 영역 색상 업데이트 """
         self.line_number_area.update_palette()
 
+    # [Lite] _on_code_modified, _on_eidos_error 슬롯 (기존과 동일)
     @Slot(dict)
     def _on_code_modified(self, response_dict: dict):
         try:
@@ -514,6 +515,7 @@ class CodeEditorWindow(QWidget):
         if "[Code Modify]" in error_msg or "[Suggestion]" in error_msg:
             self.debug_console.append(f"❌ {error_msg}")
 
+    # [Lite] _eidos_modify_code (AI 추천 기능 포함, 기존과 동일)
     @Slot()
     def _eidos_modify_code(self):
         if not self.eidos_worker or not self.current_file_path:
@@ -636,4 +638,296 @@ class CodeEditorWindow(QWidget):
                 else: os.makedirs(new_path)
                 self._refresh_file_tree()
             except Exception as e: QMessageBox.critical(self, "생성 오류", f"생성 실패: {e}")
-    def
+    def _delete_item(self, item: QTreeWidgetItem):
+        file_path = item.data(0, Qt.ItemDataRole.UserRole)
+        reply = QMessageBox.question(self, "삭제 확인", f"'{os.path.basename(file_path)}'을(를) 삭제하시겠습니까?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                if os.path.isdir(file_path): shutil.rmtree(file_path)
+                else: os.remove(file_path)
+                self._refresh_file_tree()
+            except Exception as e: QMessageBox.critical(self, "삭제 오류", f"삭제 실패: {e}")
+    @Slot()
+    def _undo_ai_modification(self):
+        if self.code_before_ai_modification is None: return
+        self.code_editor.setPlainText(self.code_before_ai_modification)
+        self.debug_console.append("✅ [Undo] AI 수정 내용을 되돌렸습니다.")
+        self.code_before_ai_modification = None; self.undo_ai_button.setEnabled(False)
+    @Slot(QRect, int)
+    def _safe_update_line_number_area(self, rect, dy):
+        try:
+            if self and self.line_number_area and self.line_number_area.window():
+                self.line_number_area.update(0, rect.y(), rect.width(), rect.height())
+        except RuntimeError: pass
+    @Slot()
+    def _update_line_number_area_width(self):
+        width = self.line_number_area.calculate_width(); self.line_number_area.setFixedWidth(width)
+    @Slot()
+    def _show_search_bar(self): self.search_bar.setVisible(True); self.search_input.setFocus()
+    @Slot()
+    def _hide_search_bar(self): self.search_bar.setVisible(False); self.code_editor.setFocus()
+    @Slot()
+    def _find_next(self):
+        search_term = self.search_input.text();
+        if search_term and not self.code_editor.find(search_term):
+            self.code_editor.moveCursor(QTextCursor.MoveOperation.Start); self.code_editor.find(search_term)
+    @Slot()
+    def _find_prev(self):
+        search_term = self.search_input.text();
+        if search_term and not self.code_editor.find(search_term, QTextDocument.FindFlag.FindBackward):
+            self.code_editor.moveCursor(QTextCursor.MoveOperation.End); self.code_editor.find(search_term, QTextDocument.FindFlag.FindBackward)
+            
+DocumentEditorWindow = CodeEditorWindow # (Lite에서는 기능이 거의 동일하므로 대체)
+
+class ChatWindow(QWidget):
+    start_worker_loop = Signal()
+    stop_worker_loop = Signal()
+
+    def __init__(self, parent=None, worker=None):
+        super().__init__(parent)
+        self.eidos_worker = worker
+        self.chat_history = deque(maxlen=30)
+        self.setAcceptDrops(True)
+
+        main_layout = QHBoxLayout(self)
+    
+        right_layout = QVBoxLayout() # [Lite] 메인 레이아웃이 됨
+
+        chat_frame = QFrame(self)
+        chat_layout = QVBoxLayout(chat_frame)
+        
+        title_layout = QHBoxLayout()
+        chat_title = QLabel("💬 EIDOS-Lite 대화 및 실행 로그", self)
+        chat_title.setObjectName("SubTitle")
+        title_layout.addWidget(chat_title)
+        title_layout.addStretch()
+        
+        self.settings_button = QPushButton("⚙️ 설정", self)
+        self.settings_button.setFixedSize(60, 30)
+        self.settings_button.clicked.connect(self.parent()._open_settings) # 부모(MainHub)의 슬롯 호출
+        title_layout.addWidget(self.settings_button)
+        
+        chat_layout.addLayout(title_layout)
+        
+        self.chat_log = QTextEdit(self)
+        self.chat_log.setObjectName("ChatLog")
+        self.chat_log.setReadOnly(True)
+        chat_layout.addWidget(self.chat_log)
+        right_layout.addWidget(chat_frame)
+
+        self.input_line = QLineEdit(self)
+        self.input_line.setPlaceholderText("EIDOS-Lite에게 작업을 지시하세요 (파일 드래그 앤 드롭 가능)...")
+        self.input_line.setStyleSheet("font-size: 12pt; padding: 10px; margin-top: 5px;")
+        
+        input_controls_layout = QHBoxLayout()
+        input_controls_layout.setContentsMargins(0, 5, 0, 0)
+        
+        self.attach_button = QPushButton("", self)
+        self.attach_button.setIcon(QIcon.fromTheme("document-open"))
+        self.attach_button.setFixedSize(40, 40)
+        self.attach_button.clicked.connect(self._attach_file_dialog)
+        self.attach_button.setToolTip("분석할 파일을 선택합니다.")
+        
+        self.attached_file_label = QLabel("첨부된 파일 없음", self)
+        self.attached_file_label.setStyleSheet("color: #999999; margin-left: 10px;")
+        
+        self.clear_attach_button = QPushButton("❌", self)
+        self.clear_attach_button.setFixedSize(40, 40)
+        self.clear_attach_button.clicked.connect(self._clear_attached_files)
+        
+        input_controls_layout.addWidget(self.attach_button)
+        input_controls_layout.addWidget(self.attached_file_label)
+        input_controls_layout.addWidget(self.clear_attach_button)
+        input_controls_layout.addStretch()
+
+        right_layout.addWidget(self.input_line)
+        right_layout.addLayout(input_controls_layout)
+        
+        main_layout.addLayout(right_layout, 1) # [Lite] 오른쪽 패널이 전체
+        
+        self.current_attached_file_paths: list[str] = []
+        
+        self.eidos_worker.response_ready.connect(self.on_eidos_response)
+        self.eidos_worker.error_occurred.connect(self.on_worker_error)
+        
+        self.eidos_worker.start()
+        self.input_line.returnPressed.connect(self.send_message)
+        
+        self.append_message("<b>[EIDOS-Lite]</b> 안녕하세요. 저는 EIDOS-Lite입니다. 작업을 지시하거나, 파일을 드래그 앤 드롭하여 분석을 요청하세요.", "system")
+
+    @Slot()
+    def _attach_file_dialog(self):
+        """ (Lite) 파일 첨부 (기존과 동일, 비디오 필터 제거) """
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self, "EIDOS 분석 자료 선택", os.path.expanduser("~"),
+            "All Files (*);;Text/Docs (*.txt *.md *.json);;Code Files (*.py *.js *.html)"
+        )
+        if file_paths:
+            self.current_attached_file_paths = [os.path.abspath(p) for p in file_paths]
+            file_names = [os.path.basename(p) for p in file_paths]
+            display_text = f"📎 첨부: {', '.join(file_names)}"
+            self.attached_file_label.setText(display_text)
+            self.attached_file_label.setStyleSheet("color: #4A90E2; font-weight: bold;")
+    
+    @Slot()
+    def _clear_attached_files(self):
+        """ (Lite) 첨부 파일 클리어 (기존과 동일) """
+        self.current_attached_file_paths = []
+        self.attached_file_label.setText("첨부된 파일 없음")
+        self.attached_file_label.setStyleSheet("color: #999999; font-weight: normal;")
+        
+    def append_message(self, text: str, sender: str):
+        """ (Lite) 채팅 로그 HTML 포매팅 (기존과 동일) """
+        if sender == "user":
+            html = f"""<div style='background-color:#E0F0FF; color:#0055AA; padding:8px; border-radius:10px; margin:5px; margin-left: 50px; text-align:right;'><b>👤 사용자:</b> {text}</div>"""
+        elif sender == "eidos":
+            html = f"""<div style='background-color:#FFFFFF; color:#1E1E1E; padding:8px; border-radius:10px; margin:5px; margin-right: 50px; text-align:left; border: 1px solid #EEEEEE;'><b>🤖 EIDOS-Lite:</b> {text}</div>"""
+        elif sender == "system":
+            html = f"""<div style='background-color:#F0F0F0; color:#555555; padding:8px; border-radius:10px; margin:5px; margin-right: 50px; text-align:left; font-style: italic;'><b>⚙️ 시스템:</b> {text}</div>"""
+        elif sender == "error":
+            html = f"""<div style='background-color:#FFDDDD; color:#8B0000; padding:8px; border-radius:10px; margin:5px; margin-right: 50px; text-align:left;'><b>❌ 오류:</b> {text}</div>"""
+        elif sender == "reasoning":
+            html = f"""<div style='background-color:#F0F8FF; color:#00008B; padding:8px; border-radius:10px; margin:5px; margin-right: 50px; text-align:left; font-style: italic;'><b>🧠 Lite-Core 추론:</b> {text}</div>"""
+        else:
+            html = f"""<div style='color:#1E1E1E;'>{text}</div>"""
+        self.chat_log.moveCursor(QTextCursor.End)
+        self.chat_log.insertHtml(html)
+        self.chat_log.insertPlainText("\n"); self.chat_log.moveCursor(QTextCursor.End)
+
+    def _format_plan_to_html(self, plan_json: str, editor_type: str, project_dir: Optional[str]) -> str:
+        """ (Lite) 작업 계획 JSON을 HTML로 포매팅 (기존과 동일) """
+        try:
+            plan_list = json.loads(plan_json)
+            html = f"""<div style='background-color:#F0F8FF; color:#00008B; padding:10px; border-radius:10px; margin:5px; margin-right: 50px; font-style: italic; border: 1px solid #D0E0F0;'>
+                <b>⚙️ EIDOS-Lite 작업 계획 수신</b><br>
+                <b>프로젝트:</b> {project_dir or 'N/A'}<br>
+                <b>에디터 유형:</b> {editor_type}<br>
+                <b>실행 단계:</b>
+                <ol style='margin-left: -20px; margin-top: 5px;'>"""
+            for i, step in enumerate(plan_list):
+                tool = step.get("tool", "N/A"); args = step.get("args", {})
+                args_str = ""
+                if "query" in args: args_str = f"({args['query'][:30]}...)"
+                elif "filepath" in args: args_str = f"({args['filepath']})"
+                elif "file_structure" in args: args_str = f"(파일 {len(args['file_structure'])}개 생성)"
+                html += f"<li><b>{tool}</b> {args_str}</li>"
+            html += "</ol></div>"
+            return html
+        except Exception as e:
+            return f"<div style='background-color:#FFDDDD; color:#8B0000;'><b>❌ 계획 파싱 오류:</b> {e}</div>"
+
+    def dropEvent(self, event: QDropEvent):
+        if event.mimeData().hasUrls():
+            new_paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
+            if new_paths:
+                self.current_attached_file_paths = [os.path.abspath(p) for p in new_paths]
+                file_names = [os.path.basename(p) for p in new_paths]
+                display_text = f"📎 첨부: {', '.join(file_names)}"
+                self.attached_file_label.setText(display_text)
+                self.attached_file_label.setStyleSheet("color: #4A90E2; font-weight: bold;")
+                event.acceptProposedAction()
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls(): event.acceptProposedAction()
+
+    @Slot()
+    def send_message(self):
+        """ (Lite) 메시지 전송 (TTS, 감정 관련 제거) """
+        user_text = self.input_line.text()
+        file_paths_to_send = self.current_attached_file_paths
+        if not user_text and not file_paths_to_send: return
+        
+        if not user_text and file_paths_to_send:
+             file_names = [os.path.basename(p) for p in file_paths_to_send]
+             user_text = f"[파일 분석 요청] 첨부된 파일 {len(file_names)}개({', '.join(file_names)})을(를) 분석하세요."
+        
+        self.append_message(user_text, "user")
+        self.input_line.clear()
+        
+        final_prompt = user_text
+        if file_paths_to_send:
+            path_list = "\n".join([f"FILE_PATH:{p}" for p in file_paths_to_send])
+            final_prompt = f"[첨부 파일 목록]\n{path_list}\n\n[사용자 지시]\n{user_text}"
+            
+        self.chat_history.append(f"👤 사용자: {final_prompt}")
+        history_list = list(self.chat_history)
+        
+        self.eidos_worker.submit_task(
+            self.eidos_worker._process_async(final_prompt, history_list)
+        )
+    
+        self.current_attached_file_paths = []; self.attached_file_label.setText("첨부된 파일 없음")
+        self.attached_file_label.setStyleSheet("color: #999999; font-weight: normal;")
+        
+        self.append_message("<i>[EIDOS-Lite가 응답 생성 중...]</i>", "eidos") # [Lite] 프로그레스 바 대신 텍스트
+
+    @Slot(str, str, object)
+    def on_eidos_response(self, natural_text: str, reasoning_log: str, exec_task_state: object):
+        """ (Lite) 단순화된 응답 처리 (감정, TTS, 작업 분해 제거) ""
+        cursor = self.chat_log.textCursor()
+        cursor.movePosition(QTextCursor.End); cursor.select(QTextCursor.BlockUnderCursor)
+        if "<i>[EIDOS-Lite가 응답 생성 중...]</i>" in cursor.selectedText(): 
+            cursor.removeSelectedText(); cursor.deletePreviousChar()
+        
+        self.chat_history.append(f"🤖 EIDOS-Lite: {natural_text}")
+        
+        if reasoning_log: 
+            self.append_message(reasoning_log, "reasoning")
+            
+        if isinstance(exec_task_state, dict):
+            plan_json = exec_task_state.get("plan_json")
+            if plan_json:
+                plan_html = self._format_plan_to_html(
+                    plan_json, 
+                    exec_task_state.get("editor_type", "NONE"), 
+                    exec_task_state.get("project_dir")
+                )
+                self.chat_log.moveCursor(QTextCursor.End)
+                self.chat_log.insertHtml(plan_html)
+                self.chat_log.insertPlainText("\n"); self.chat_log.moveCursor(QTextCursor.End)
+            
+            if natural_text:
+                self.append_message(natural_text, "eidos")
+        
+        else:
+            self.append_message(natural_text, "eidos")
+
+        if isinstance(exec_task_state, dict):
+            project_dir_name = exec_task_state.get("project_dir")
+            editor_type = exec_task_state.get("editor_type", "NONE")
+            
+            if project_dir_name and editor_type != "NONE":
+                project_path = os.path.join("eidos_files", project_dir_name)
+                main_hub = self.parent()
+                if isinstance(main_hub, MainHubWindow):
+                    if editor_type == "CODE" or editor_type == "DOCUMENT":
+                        main_hub._open_file_in_editor_from_plan(project_path, editor_type, exec_task_state)
+                        self.append_message(f"<i>[EIDOS-Lite가 '{project_dir_name}' 프로젝트 에디터를 열었습니다.]</i>", "system")
+
+    @Slot(str)
+    def on_worker_error(self, error_message: str):
+        """ (Lite) 오류 처리 (단순화) """
+        cursor = self.chat_log.textCursor(); cursor.movePosition(QTextCursor.End); cursor.select(QTextCursor.BlockUnderCursor)
+        if "<i>[EIDOS-Lite가 응답 생성 중...]</i>" in cursor.selectedText(): 
+            cursor.removeSelectedText(); cursor.deletePreviousChar()
+        self.append_message(error_message, "error")
+
+    
+    def closeEvent(self, event):
+        """ (Lite) GUI 종료 (단순화) """
+        print("GUI 종료 중... EIDOS-Lite 워커 종료 요청...")
+        if hasattr(self, 'eidos_worker'):
+             self.eidos_worker.stop_loop(); self.eidos_worker.quit(); self.eidos_worker.wait()
+        print("EIDOS-Lite 워커 종료 완료."); event.accept()
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    
+    worker = EidosWorker()
+    window = MainHubWindow(worker)
+    
+    saved_theme = load_theme_setting()
+    window.apply_theme(saved_theme)
+    
+    worker.start()
+    window.show()
+    sys.exit(app.exec())
