@@ -1,0 +1,4 @@
+google-generativeai
+PySide6
+aiohttp
+sympy
